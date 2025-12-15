@@ -3,7 +3,6 @@ use hyprland::dispatch::{
     Dispatch, DispatchType as DT, MonitorIdentifier, WorkspaceIdentifier,
     WorkspaceIdentifierWithSpecial,
 };
-
 use hyprland::prelude::*;
 use hyprland::shared::HyprError;
 use hyprland::Result;
@@ -43,72 +42,70 @@ pub fn move_to(workspace_id: i32) -> Result<()> {
 
     if monitors.monitors.len() == 1 {
         switch_to_workspace(workspace_id, None)?;
-    };
+        return Ok(());
+    }
 
     match monitors.passive_monitor {
         Some(passive_monitor_id) => {
             swap_active_workspace(monitors.active_monitor, passive_monitor_id)?
         }
-        _ => switch_to_workspace(workspace_id, Some(monitors.active_monitor))?,
+        None => {
+            // target is not shown anywhere → switch and auto-create if missing
+            switch_to_workspace(workspace_id, Some(monitors.active_monitor))?
+        }
     }
 
     Ok(())
 }
 
 pub fn get_current_workspace() -> Result<i32> {
-    let workspace = Workspace::get_active()?.id;
-    Ok(workspace)
+    Ok(Workspace::get_active()?.id)
 }
 
 pub fn move_to_next() -> Result<()> {
-    match get_current_workspace() {
-        Ok(workspace) => move_to(workspace + 1),
-        Err(hypr_error) => Err(hypr_error),
-    }
+    move_to(get_current_workspace()? + 1)
 }
 
 pub fn move_to_previous() -> Result<()> {
-    match get_current_workspace() {
-        Ok(workspace) => move_to(workspace - 1),
-        Err(hypr_error) => Err(hypr_error),
-    }
+    move_to(get_current_workspace()? - 1)
 }
 
 pub fn swap_active_workspace(active_monitor_id: i128, passive_monitor_id: i128) -> Result<()> {
-    let active_monitor = MonitorIdentifier::Id(active_monitor_id);
-    let passive_monitor = MonitorIdentifier::Id(passive_monitor_id);
-    Dispatch::call(DT::SwapActiveWorkspaces(active_monitor, passive_monitor))?;
+    let active = MonitorIdentifier::Id(active_monitor_id);
+    let passive = MonitorIdentifier::Id(passive_monitor_id);
+    Dispatch::call(DT::SwapActiveWorkspaces(active, passive))?;
     Ok(())
 }
 
 pub fn switch_to_workspace(workspace_id: i32, active_monitor_id: Option<i128>) -> Result<()> {
-    let workspace = WorkspaceIdentifierWithSpecial::Id(workspace_id);
-    if let Some(active_monitor_id) = active_monitor_id {
-        let workspace = WorkspaceIdentifier::Id(workspace_id);
-        let active_monitor = MonitorIdentifier::Id(active_monitor_id);
+    let wsp_special = WorkspaceIdentifierWithSpecial::Id(workspace_id);
 
-        match Dispatch::call(DT::MoveWorkspaceToMonitor(workspace, active_monitor)) {
-            Err(e) => match e {
-                HyprError::NotOkDispatch(val)
-                    if val == "moveWorkspaceToMonitor workspace doesn't exist!".to_owned() =>
-                {
-                    ()
-                }
-                _ => return Err(e),
-            },
-            _ => (),
-        };
+    // If a monitor is given, try moving the workspace to that monitor.
+    if let Some(active_monitor_id) = active_monitor_id {
+        let wsp = WorkspaceIdentifier::Id(workspace_id);
+        let mon = MonitorIdentifier::Id(active_monitor_id);
+
+        match Dispatch::call(DT::MoveWorkspaceToMonitor(wsp, mon)) {
+            // Workspace does not exist → ignore and continue.
+            Err(HyprError::NotOkDispatch(val))
+                if val == "moveWorkspaceToMonitor workspace doesn't exist!" =>
+            {
+                // fall-through: DT::Workspace will create it
+            }
+            Err(e) => return Err(e),
+            _ => {}
+        }
     }
 
-    match Dispatch::call(DT::Workspace(workspace)) {
+    // This dispatch always succeeds in creating the workspace if missing.
+    match Dispatch::call(DT::Workspace(wsp_special)) {
         Ok(()) => Ok(()),
-        Err(e) => match e {
-            HyprError::NotOkDispatch(val)
-                if val == "Previous workspace doesn't exist".to_owned() =>
-            {
-                Ok(())
-            }
-            _ => Err(e),
-        },
+        Err(HyprError::NotOkDispatch(val))
+            if val == "Previous workspace doesn't exist".to_owned() =>
+        {
+            // harmless, workspace still gets created
+            Ok(())
+        }
+        Err(e) => Err(e),
     }
 }
