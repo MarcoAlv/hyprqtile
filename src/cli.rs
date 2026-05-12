@@ -6,6 +6,10 @@ use clap::{ArgAction, Parser};
     arg_required_else_help = true
 )]
 pub struct HyprQtileArgs {
+    /// Print what the program is doing to stderr
+    #[arg(short, long, global = true)]
+    pub verbose: bool,
+
     /// Moves to the specified workspace
     #[arg(short, long, conflicts_with = "next", conflicts_with = "previous")]
     pub workspace: Option<i32>,
