@@ -7,6 +7,12 @@ use hyprland::prelude::*;
 use hyprland::shared::HyprError;
 use hyprland::Result;
 
+fn trace(verbose: bool, msg: impl std::fmt::Display) {
+    if verbose {
+        eprintln!("hyprqtile: {msg}");
+    }
+}
+
 pub struct MonitorsResult {
     pub active_monitor: i128,
     pub passive_monitor: Option<i128>,
@@ -37,21 +43,45 @@ impl MonitorsResult {
     }
 }
 
-pub fn move_to(workspace_id: i32) -> Result<()> {
+pub fn move_to(workspace_id: i32, verbose: bool) -> Result<()> {
+    trace(
+        verbose,
+        format!("target workspace {workspace_id} (querying monitors)"),
+    );
     let monitors = MonitorsResult::get(workspace_id)?;
 
     if monitors.monitors.len() == 1 {
-        switch_to_workspace(workspace_id, None)?;
+        trace(
+            verbose,
+            format!(
+                "one monitor (id {}); switch workspace {workspace_id} then move to this monitor",
+                monitors.active_monitor
+            ),
+        );
+        switch_to_workspace(workspace_id, Some(monitors.active_monitor), verbose)?;
         return Ok(());
     }
 
     match monitors.passive_monitor {
         Some(passive_monitor_id) => {
-            swap_active_workspace(monitors.active_monitor, passive_monitor_id)?
+            trace(
+                verbose,
+                format!(
+                    "workspace {workspace_id} visible on monitor {passive_monitor_id}; swapping with active monitor {}",
+                    monitors.active_monitor
+                ),
+            );
+            swap_active_workspace(monitors.active_monitor, passive_monitor_id, verbose)?
         }
         None => {
-            // target is not shown anywhere → switch and auto-create if missing
-            switch_to_workspace(workspace_id, Some(monitors.active_monitor))?
+            trace(
+                verbose,
+                format!(
+                    "workspace {workspace_id} not active on another monitor; switch/create then move to monitor {}",
+                    monitors.active_monitor
+                ),
+            );
+            switch_to_workspace(workspace_id, Some(monitors.active_monitor), verbose)?
         }
     }
 
@@ -62,50 +92,62 @@ pub fn get_current_workspace() -> Result<i32> {
     Ok(Workspace::get_active()?.id)
 }
 
-pub fn move_to_next() -> Result<()> {
-    move_to(get_current_workspace()? + 1)
+pub fn move_to_next(verbose: bool) -> Result<()> {
+    let from = get_current_workspace()?;
+    let to = from + 1;
+    trace(verbose, format!("next: {from} → {to}"));
+    move_to(to, verbose)
 }
 
-pub fn move_to_previous() -> Result<()> {
-    move_to(get_current_workspace()? - 1)
+pub fn move_to_previous(verbose: bool) -> Result<()> {
+    let from = get_current_workspace()?;
+    let to = from - 1;
+    trace(verbose, format!("previous: {from} → {to}"));
+    move_to(to, verbose)
 }
 
-pub fn swap_active_workspace(active_monitor_id: i128, passive_monitor_id: i128) -> Result<()> {
+pub fn swap_active_workspace(
+    active_monitor_id: i128,
+    passive_monitor_id: i128,
+    verbose: bool,
+) -> Result<()> {
+    trace(
+        verbose,
+        format!("dispatch swapactiveworkspaces {active_monitor_id} {passive_monitor_id}"),
+    );
     let active = MonitorIdentifier::Id(active_monitor_id);
     let passive = MonitorIdentifier::Id(passive_monitor_id);
     Dispatch::call(DT::SwapActiveWorkspaces(active, passive))?;
     Ok(())
 }
 
-pub fn switch_to_workspace(workspace_id: i32, active_monitor_id: Option<i128>) -> Result<()> {
+pub fn switch_to_workspace(
+    workspace_id: i32,
+    active_monitor_id: Option<i128>,
+    verbose: bool,
+) -> Result<()> {
     let wsp_special = WorkspaceIdentifierWithSpecial::Id(workspace_id);
 
-    // If a monitor is given, try moving the workspace to that monitor.
-    if let Some(active_monitor_id) = active_monitor_id {
-        let wsp = WorkspaceIdentifier::Id(workspace_id);
-        let mon = MonitorIdentifier::Id(active_monitor_id);
-
-        match Dispatch::call(DT::MoveWorkspaceToMonitor(wsp, mon)) {
-            // Workspace does not exist → ignore and continue.
-            Err(HyprError::NotOkDispatch(val))
-                if val == "moveWorkspaceToMonitor workspace doesn't exist!" =>
-            {
-                // fall-through: DT::Workspace will create it
-            }
-            Err(e) => return Err(e),
-            _ => {}
-        }
-    }
-
-    // This dispatch always succeeds in creating the workspace if missing.
+    trace(verbose, format!("dispatch workspace {workspace_id}"));
     match Dispatch::call(DT::Workspace(wsp_special)) {
-        Ok(()) => Ok(()),
+        Ok(()) => {}
         Err(HyprError::NotOkDispatch(val))
             if val == "Previous workspace doesn't exist".to_owned() =>
         {
-            // harmless, workspace still gets created
-            Ok(())
+            // harmless Hyprland quirk; workspace still switches or is created
         }
-        Err(e) => Err(e),
+        Err(e) => return Err(e),
     }
+
+    if let Some(active_monitor_id) = active_monitor_id {
+        trace(
+            verbose,
+            format!("dispatch moveworkspacetomonitor {workspace_id} → monitor {active_monitor_id}"),
+        );
+        let wsp = WorkspaceIdentifier::Id(workspace_id);
+        let mon = MonitorIdentifier::Id(active_monitor_id);
+        Dispatch::call(DT::MoveWorkspaceToMonitor(wsp, mon))?;
+    }
+
+    Ok(())
 }
