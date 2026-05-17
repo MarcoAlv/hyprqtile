@@ -43,6 +43,10 @@ impl MonitorsResult {
     }
 }
 
+fn workspace_exists(workspace_id: i32) -> Result<bool> {
+    Ok(Workspaces::get()?.iter().any(|w| w.id == workspace_id))
+}
+
 pub fn move_to(workspace_id: i32, verbose: bool) -> Result<()> {
     trace(
         verbose,
@@ -53,12 +57,9 @@ pub fn move_to(workspace_id: i32, verbose: bool) -> Result<()> {
     if monitors.monitors.len() == 1 {
         trace(
             verbose,
-            format!(
-                "one monitor (id {}); switch workspace {workspace_id} then move to this monitor",
-                monitors.active_monitor
-            ),
+            format!("one monitor (id {}); switch workspace {workspace_id}", monitors.active_monitor),
         );
-        switch_to_workspace(workspace_id, Some(monitors.active_monitor), verbose)?;
+        switch_to_workspace(workspace_id, None, verbose)?;
         return Ok(());
     }
 
@@ -67,11 +68,11 @@ pub fn move_to(workspace_id: i32, verbose: bool) -> Result<()> {
             trace(
                 verbose,
                 format!(
-                    "workspace {workspace_id} active on monitor {passive_monitor_id}; pull to focused monitor {}",
+                    "workspace {workspace_id} visible on monitor {passive_monitor_id}; swapping with focused monitor {}",
                     monitors.active_monitor
                 ),
             );
-            pull_workspace_to_focused_monitor(workspace_id, monitors.active_monitor, verbose)?
+            swap_active_workspace(monitors.active_monitor, passive_monitor_id, verbose)?
         }
         None => {
             trace(
@@ -121,19 +122,18 @@ fn dispatch_workspace_by_id(workspace_id: i32, verbose: bool) -> Result<()> {
     Ok(())
 }
 
-fn pull_workspace_to_focused_monitor(
-    workspace_id: i32,
+fn swap_active_workspace(
     active_monitor_id: i128,
+    passive_monitor_id: i128,
     verbose: bool,
 ) -> Result<()> {
     trace(
         verbose,
-        format!("dispatch moveworkspacetomonitor {workspace_id} → monitor {active_monitor_id}"),
+        format!("dispatch swapactiveworkspaces {active_monitor_id} {passive_monitor_id}"),
     );
-    let wsp = WorkspaceIdentifier::Id(workspace_id);
-    let mon = MonitorIdentifier::Id(active_monitor_id);
-    Dispatch::call(DT::MoveWorkspaceToMonitor(wsp, mon))?;
-    dispatch_workspace_by_id(workspace_id, verbose)?;
+    let active = MonitorIdentifier::Id(active_monitor_id);
+    let passive = MonitorIdentifier::Id(passive_monitor_id);
+    Dispatch::call(DT::SwapActiveWorkspaces(active, passive))?;
     Ok(())
 }
 
@@ -142,17 +142,22 @@ pub fn switch_to_workspace(
     active_monitor_id: Option<i128>,
     verbose: bool,
 ) -> Result<()> {
-    dispatch_workspace_by_id(workspace_id, verbose)?;
+    let exists = workspace_exists(workspace_id)?;
+    trace(verbose, format!("workspace {workspace_id} exists: {exists}"));
 
-    if let Some(active_monitor_id) = active_monitor_id {
-        trace(
-            verbose,
-            format!("dispatch moveworkspacetomonitor {workspace_id} → monitor {active_monitor_id}"),
-        );
-        let wsp = WorkspaceIdentifier::Id(workspace_id);
-        let mon = MonitorIdentifier::Id(active_monitor_id);
-        Dispatch::call(DT::MoveWorkspaceToMonitor(wsp, mon))?;
+    if exists {
+        if let Some(active_monitor_id) = active_monitor_id {
+            trace(
+                verbose,
+                format!(
+                    "dispatch moveworkspacetomonitor {workspace_id} → monitor {active_monitor_id}"
+                ),
+            );
+            let wsp = WorkspaceIdentifier::Id(workspace_id);
+            let mon = MonitorIdentifier::Id(active_monitor_id);
+            Dispatch::call(DT::MoveWorkspaceToMonitor(wsp, mon))?;
+        }
     }
 
-    Ok(())
+    dispatch_workspace_by_id(workspace_id, verbose)
 }
