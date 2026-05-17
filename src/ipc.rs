@@ -67,11 +67,11 @@ pub fn move_to(workspace_id: i32, verbose: bool) -> Result<()> {
             trace(
                 verbose,
                 format!(
-                    "workspace {workspace_id} visible on monitor {passive_monitor_id}; swapping with active monitor {}",
+                    "workspace {workspace_id} active on monitor {passive_monitor_id}; pull to focused monitor {}",
                     monitors.active_monitor
                 ),
             );
-            swap_active_workspace(monitors.active_monitor, passive_monitor_id, verbose)?
+            pull_workspace_to_focused_monitor(workspace_id, monitors.active_monitor, verbose)?
         }
         None => {
             trace(
@@ -106,28 +106,8 @@ pub fn move_to_previous(verbose: bool) -> Result<()> {
     move_to(to, verbose)
 }
 
-pub fn swap_active_workspace(
-    active_monitor_id: i128,
-    passive_monitor_id: i128,
-    verbose: bool,
-) -> Result<()> {
-    trace(
-        verbose,
-        format!("dispatch swapactiveworkspaces {active_monitor_id} {passive_monitor_id}"),
-    );
-    let active = MonitorIdentifier::Id(active_monitor_id);
-    let passive = MonitorIdentifier::Id(passive_monitor_id);
-    Dispatch::call(DT::SwapActiveWorkspaces(active, passive))?;
-    Ok(())
-}
-
-pub fn switch_to_workspace(
-    workspace_id: i32,
-    active_monitor_id: Option<i128>,
-    verbose: bool,
-) -> Result<()> {
+fn dispatch_workspace_by_id(workspace_id: i32, verbose: bool) -> Result<()> {
     let wsp_special = WorkspaceIdentifierWithSpecial::Id(workspace_id);
-
     trace(verbose, format!("dispatch workspace {workspace_id}"));
     match Dispatch::call(DT::Workspace(wsp_special)) {
         Ok(()) => {}
@@ -138,6 +118,31 @@ pub fn switch_to_workspace(
         }
         Err(e) => return Err(e),
     }
+    Ok(())
+}
+
+fn pull_workspace_to_focused_monitor(
+    workspace_id: i32,
+    active_monitor_id: i128,
+    verbose: bool,
+) -> Result<()> {
+    trace(
+        verbose,
+        format!("dispatch moveworkspacetomonitor {workspace_id} → monitor {active_monitor_id}"),
+    );
+    let wsp = WorkspaceIdentifier::Id(workspace_id);
+    let mon = MonitorIdentifier::Id(active_monitor_id);
+    Dispatch::call(DT::MoveWorkspaceToMonitor(wsp, mon))?;
+    dispatch_workspace_by_id(workspace_id, verbose)?;
+    Ok(())
+}
+
+pub fn switch_to_workspace(
+    workspace_id: i32,
+    active_monitor_id: Option<i128>,
+    verbose: bool,
+) -> Result<()> {
+    dispatch_workspace_by_id(workspace_id, verbose)?;
 
     if let Some(active_monitor_id) = active_monitor_id {
         trace(
